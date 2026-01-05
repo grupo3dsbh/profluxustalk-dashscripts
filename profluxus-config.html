@@ -3,11 +3,12 @@
   'use strict';
 
   // ============================================================
-  // PROFLUXUS CONFIG - GERENCIADOR DE WHATSAPP E NOTIFICAÇÕES
+  // PROFLUXUS CONFIG - GERENCIADOR COMPLETO
   // ============================================================
-  // Adiciona campos para configurar WhatsApp e tipo de uso do ProFluxus
-  // - Na página de perfil: usuário edita telefone, visualiza tipo de uso
-  // - Na lista de agentes: admin edita telefone e tipo de uso
+  // Gerencia todas as configurações ProFluxus do usuário:
+  // - WhatsApp e tipo de notificação (receber_leads ou notificacoes_profluxus)
+  // - API de atualização de consultor (URL, método, chave de acesso)
+  // - Documento (CPF/CNPJ)
   // ============================================================
 
   console.log('📱 ProFluxus Config carregado!');
@@ -20,11 +21,16 @@
     opcoes_uso: [
       { value: 'receber_leads', label: 'Receber Leads' },
       { value: 'notificacoes_profluxus', label: 'Notificações ProFluxus' }
+    ],
+    metodos_api: [
+      { value: 'POST', label: 'POST' },
+      { value: 'GET', label: 'GET' }
     ]
   };
 
   // Cache de dados dos agentes
   let agentesCache = {};
+  let currentUserData = null;
 
   // ============================================================
   // FUNÇÕES DE API
@@ -40,34 +46,61 @@
   }
 
   /**
-   * Pega o auth token do Chatwoot
+   * Pega o auth token do Chatwoot de forma mais robusta
    * @returns {string|null} Token ou null
    */
   function getAuthToken() {
-    // Tenta pegar do localStorage
-    const keys = Object.keys(localStorage);
-    for (const key of keys) {
-      if (key.includes('auth') || key.includes('token')) {
-        try {
-          const data = JSON.parse(localStorage.getItem(key));
-          if (data && data.token) {
-            return data.token;
+    // Método 1: Tenta pegar do Vuex store (mais confiável)
+    try {
+      if (window.$chatwoot && window.$chatwoot.store) {
+        const state = window.$chatwoot.store.state;
+        if (state && state.auth && state.auth.currentUser) {
+          const token = state.auth.currentUser.access_token;
+          if (token) {
+            console.log('✅ Token obtido do Vuex store');
+            return token;
           }
-        } catch (e) {
-          // Ignora erros de parse
         }
       }
+    } catch (e) {
+      console.log('⚠️ Erro ao acessar Vuex store:', e);
     }
 
-    // Tenta pegar de cookies
-    const cookies = document.cookie.split(';');
-    for (const cookie of cookies) {
-      const [name, value] = cookie.trim().split('=');
-      if (name.includes('auth') || name.includes('token')) {
-        return value;
+    // Método 2: Tenta pegar do localStorage do Chatwoot
+    try {
+      const authData = localStorage.getItem('auth');
+      if (authData) {
+        const parsed = JSON.parse(authData);
+        if (parsed && parsed.currentUser && parsed.currentUser.access_token) {
+          console.log('✅ Token obtido do localStorage auth');
+          return parsed.currentUser.access_token;
+        }
       }
+    } catch (e) {
+      console.log('⚠️ Erro ao acessar localStorage auth:', e);
     }
 
+    // Método 3: Procura em todos os items do localStorage
+    try {
+      const keys = Object.keys(localStorage);
+      for (const key of keys) {
+        if (key.toLowerCase().includes('chatwoot') || key.toLowerCase().includes('auth')) {
+          try {
+            const data = JSON.parse(localStorage.getItem(key));
+            if (data && data.currentUser && data.currentUser.access_token) {
+              console.log('✅ Token obtido de:', key);
+              return data.currentUser.access_token;
+            }
+          } catch (e) {
+            // Ignora erros de parse
+          }
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao procurar token:', e);
+    }
+
+    console.log('❌ Não foi possível obter o token de autenticação');
     return null;
   }
 
@@ -79,7 +112,6 @@
    * @returns {Promise<object>} Resposta da API
    */
   async function chatwootAPI(endpoint, method = 'GET', data = null) {
-    const token = getAuthToken();
     const baseURL = window.location.origin;
 
     const options = {
@@ -90,6 +122,7 @@
       credentials: 'include'
     };
 
+    const token = getAuthToken();
     if (token) {
       options.headers['Authorization'] = `Bearer ${token}`;
     }
@@ -98,9 +131,12 @@
       options.body = JSON.stringify(data);
     }
 
+    console.log('🌐 Chamando API:', method, endpoint);
+
     const response = await fetch(`${baseURL}${endpoint}`, options);
 
     if (!response.ok) {
+      console.error('❌ Erro na API:', response.status, response.statusText);
       throw new Error(`API Error: ${response.status}`);
     }
 
@@ -112,7 +148,12 @@
    * @returns {Promise<object>} Dados do usuário
    */
   async function getCurrentUser() {
-    return await chatwootAPI('/api/v1/profile');
+    if (currentUserData) {
+      return currentUserData;
+    }
+
+    currentUserData = await chatwootAPI('/api/v1/profile');
+    return currentUserData;
   }
 
   /**
@@ -144,32 +185,62 @@
   // ============================================================
 
   /**
-   * Pega os atributos do ProFluxus para uma conta específica
+   * Pega todos os atributos do ProFluxus
    * @param {object} customAttributes - Custom attributes do usuário
    * @param {string} accountId - ID da conta
-   * @returns {object} Atributos { whatsapp, uso_profluxus }
+   * @returns {object} Todos os atributos ProFluxus
    */
   function getProFluxusAttrs(customAttributes, accountId) {
     const key = `account_${accountId}`;
 
-    if (!customAttributes || !customAttributes[key]) {
-      return {
-        whatsapp: '',
-        uso_profluxus: 'receber_leads'
-      };
+    const defaults = {
+      whatsapp: '',
+      uso_profluxus: 'receber_leads',
+      chave_openai: '',
+      prompt_openai: '',
+      documento: '',
+      api_openai: {
+        url: '',
+        method: 'POST'
+      }
+    };
+
+    if (!customAttributes) {
+      return defaults;
     }
 
+    // Busca dados da conta específica
+    const accountData = customAttributes[key] || {};
+
+    // Busca dados globais (fallback para compatibilidade)
+    const globalData = {
+      whatsapp: customAttributes.whatsapp || '',
+      uso_profluxus: customAttributes.uso_profluxus || 'receber_leads',
+      chave_openai: customAttributes.chave_openai || '',
+      prompt_openai: customAttributes.prompt_openai || '',
+      documento: customAttributes.documento || '',
+      api_openai: customAttributes.api_openai || { url: '', method: 'POST' }
+    };
+
+    // Merge: prioriza dados da conta, depois global, depois defaults
     return {
-      whatsapp: customAttributes[key].whatsapp || '',
-      uso_profluxus: customAttributes[key].uso_profluxus || 'receber_leads'
+      whatsapp: accountData.whatsapp || globalData.whatsapp || defaults.whatsapp,
+      uso_profluxus: accountData.uso_profluxus || globalData.uso_profluxus || defaults.uso_profluxus,
+      chave_openai: globalData.chave_openai || defaults.chave_openai,
+      prompt_openai: globalData.prompt_openai || defaults.prompt_openai,
+      documento: globalData.documento || defaults.documento,
+      api_openai: {
+        url: (globalData.api_openai && globalData.api_openai.url) || defaults.api_openai.url,
+        method: (globalData.api_openai && globalData.api_openai.method) || defaults.api_openai.method
+      }
     };
   }
 
   /**
    * Atualiza os atributos do ProFluxus
-   * @param {object} customAttributes - Custom attributes do usuário
+   * @param {object} customAttributes - Custom attributes atuais
    * @param {string} accountId - ID da conta
-   * @param {object} attrs - Novos atributos { whatsapp, uso_profluxus }
+   * @param {object} attrs - Novos atributos
    * @returns {object} Custom attributes atualizado
    */
   function setProFluxusAttrs(customAttributes, accountId, attrs) {
@@ -177,9 +248,19 @@
 
     const updated = { ...customAttributes };
 
+    // Atualiza dados da conta específica
     updated[key] = {
       whatsapp: attrs.whatsapp,
       uso_profluxus: attrs.uso_profluxus
+    };
+
+    // Atualiza dados globais
+    updated.chave_openai = attrs.chave_openai;
+    updated.prompt_openai = attrs.prompt_openai;
+    updated.documento = attrs.documento;
+    updated.api_openai = {
+      url: attrs.api_openai.url,
+      method: attrs.api_openai.method
     };
 
     return updated;
@@ -193,7 +274,6 @@
    * Cria o modal de edição
    */
   function criarModal() {
-    // Verifica se já existe
     if (document.getElementById('profluxus-modal')) {
       return;
     }
@@ -211,6 +291,8 @@
       z-index: 10000;
       align-items: center;
       justify-content: center;
+      overflow-y: auto;
+      padding: 20px;
     `;
 
     modal.innerHTML = `
@@ -218,8 +300,10 @@
         background-color: white;
         border-radius: 12px;
         padding: 32px;
-        max-width: 500px;
-        width: 90%;
+        max-width: 600px;
+        width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
         box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
       ">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
@@ -265,6 +349,12 @@
           />
         </div>
 
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+
+        <h3 style="font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 16px;">
+          Notificações WhatsApp
+        </h3>
+
         <div style="margin-bottom: 20px;">
           <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
             WhatsApp
@@ -283,12 +373,9 @@
               background-color: white;
             "
           />
-          <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
-            Número de WhatsApp para receber notificações
-          </p>
         </div>
 
-        <div style="margin-bottom: 24px;">
+        <div style="margin-bottom: 20px;">
           <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
             Tipo de Uso
           </label>
@@ -308,9 +395,129 @@
               <option value="${opt.value}">${opt.label}</option>
             `).join('')}
           </select>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+
+        <h3 style="font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 16px;">
+          API de Atualização de Consultor
+        </h3>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            URL da API
+          </label>
+          <input
+            type="url"
+            id="profluxus-modal-api-url"
+            placeholder="https://api.exemplo.com/consultor"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+            "
+          />
           <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
-            Como o agente utilizará o ProFluxus
+            Endpoint para atualizar dados do consultor
           </p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Método HTTP
+          </label>
+          <select
+            id="profluxus-modal-api-method"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+            "
+          >
+            ${CONFIG.metodos_api.map(opt => `
+              <option value="${opt.value}">${opt.label}</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Chave de API (Access Token)
+          </label>
+          <input
+            type="text"
+            id="profluxus-modal-chave-openai"
+            placeholder="oT4hMJhLrpeVmqZdHpcsY9Nr"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+              font-family: monospace;
+            "
+          />
+          <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
+            Token de autenticação da API
+          </p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Dados Adicionais (Prompt)
+          </label>
+          <textarea
+            id="profluxus-modal-prompt-openai"
+            placeholder="Informações adicionais..."
+            rows="3"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+              resize: vertical;
+              font-family: inherit;
+            "
+          ></textarea>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+
+        <h3 style="font-size: 16px; font-weight: 600; color: #111827; margin-bottom: 16px;">
+          Dados Adicionais
+        </h3>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Documento (CPF/CNPJ)
+          </label>
+          <input
+            type="text"
+            id="profluxus-modal-documento"
+            placeholder="00000000000"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+            "
+          />
         </div>
 
         <div id="profluxus-modal-message" style="margin-bottom: 20px; display: none;">
@@ -350,11 +557,9 @@
 
     document.body.appendChild(modal);
 
-    // Eventos do modal
     document.getElementById('profluxus-modal-close').addEventListener('click', fecharModal);
     document.getElementById('profluxus-modal-cancelar').addEventListener('click', fecharModal);
 
-    // Fecha ao clicar fora
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
         fecharModal();
@@ -364,8 +569,6 @@
 
   /**
    * Abre o modal para editar um agente
-   * @param {number} userId - ID do usuário
-   * @param {string} userName - Nome do usuário
    */
   async function abrirModal(userId, userName) {
     criarModal();
@@ -373,7 +576,6 @@
     const modal = document.getElementById('profluxus-modal');
     const accountId = getAccountId();
 
-    // Busca dados do agente
     const agente = agentesCache[userId];
 
     if (!agente) {
@@ -387,26 +589,24 @@
     document.getElementById('profluxus-modal-nome').value = userName;
     document.getElementById('profluxus-modal-whatsapp').value = attrs.whatsapp;
     document.getElementById('profluxus-modal-uso').value = attrs.uso_profluxus;
+    document.getElementById('profluxus-modal-chave-openai').value = attrs.chave_openai;
+    document.getElementById('profluxus-modal-prompt-openai').value = attrs.prompt_openai;
+    document.getElementById('profluxus-modal-api-url').value = attrs.api_openai.url;
+    document.getElementById('profluxus-modal-api-method').value = attrs.api_openai.method;
+    document.getElementById('profluxus-modal-documento').value = attrs.documento;
 
-    // Limpa mensagens
     document.getElementById('profluxus-modal-message').style.display = 'none';
 
-    // Mostra o modal
     modal.style.display = 'flex';
 
-    // Adiciona evento de salvar
     const btnSalvar = document.getElementById('profluxus-modal-salvar');
-
-    // Remove listeners antigos
     const novoBtnSalvar = btnSalvar.cloneNode(true);
     btnSalvar.parentNode.replaceChild(novoBtnSalvar, btnSalvar);
 
-    // Adiciona novo listener
     novoBtnSalvar.addEventListener('click', async () => {
       await salvarConfiguracoesModal(userId);
     });
 
-    // Restaura hover
     novoBtnSalvar.addEventListener('mouseover', () => {
       novoBtnSalvar.style.backgroundColor = '#991b1b';
     });
@@ -417,12 +617,21 @@
 
   /**
    * Salva as configurações do modal
-   * @param {number} userId - ID do usuário
    */
   async function salvarConfiguracoesModal(userId) {
     const accountId = getAccountId();
-    const whatsapp = document.getElementById('profluxus-modal-whatsapp').value.trim();
-    const uso = document.getElementById('profluxus-modal-uso').value;
+
+    const attrs = {
+      whatsapp: document.getElementById('profluxus-modal-whatsapp').value.trim(),
+      uso_profluxus: document.getElementById('profluxus-modal-uso').value,
+      chave_openai: document.getElementById('profluxus-modal-chave-openai').value.trim(),
+      prompt_openai: document.getElementById('profluxus-modal-prompt-openai').value.trim(),
+      documento: document.getElementById('profluxus-modal-documento').value.trim(),
+      api_openai: {
+        url: document.getElementById('profluxus-modal-api-url').value.trim(),
+        method: document.getElementById('profluxus-modal-api-method').value
+      }
+    };
 
     const messageDiv = document.getElementById('profluxus-modal-message');
     const messageP = messageDiv.querySelector('p');
@@ -430,30 +639,22 @@
     try {
       messageDiv.style.display = 'none';
 
-      // Busca agente do cache
       const agente = agentesCache[userId];
 
       if (!agente) {
         throw new Error('Agente não encontrado no cache');
       }
 
-      // Atualiza os atributos
       const updatedAttrs = setProFluxusAttrs(
         agente.custom_attributes || {},
         accountId,
-        {
-          whatsapp: whatsapp,
-          uso_profluxus: uso
-        }
+        attrs
       );
 
-      // Salva na API
       await updateUserAttributes(accountId, userId, updatedAttrs);
 
-      // Atualiza o cache
       agente.custom_attributes = updatedAttrs;
 
-      // Mostra mensagem de sucesso
       messageP.textContent = '✅ Configurações salvas com sucesso!';
       messageP.style.backgroundColor = '#d1fae5';
       messageP.style.color = '#065f46';
@@ -461,7 +662,6 @@
 
       console.log('✅ Configurações ProFluxus salvas para usuário:', userId);
 
-      // Fecha o modal após 1.5 segundos
       setTimeout(() => {
         fecharModal();
       }, 1500);
@@ -494,14 +694,12 @@
    * Adiciona seção de configuração na página de perfil
    */
   async function adicionarSecaoPerfil() {
-    // Verifica se está na página de perfil
     if (!window.location.pathname.includes('/profile/settings')) {
       return;
     }
 
     console.log('📝 Adicionando seção ProFluxus no perfil...');
 
-    // Busca o container de configurações
     const container = document.querySelector('form');
 
     if (!container) {
@@ -509,7 +707,6 @@
       return;
     }
 
-    // Verifica se já foi adicionado
     if (document.getElementById('profluxus-config-section')) {
       return;
     }
@@ -520,7 +717,6 @@
       return;
     }
 
-    // Busca dados do usuário
     let userData;
     try {
       userData = await getCurrentUser();
@@ -531,7 +727,7 @@
 
     const attrs = getProFluxusAttrs(userData.custom_attributes, accountId);
 
-    // Cria a seção
+    // Cria a seção (interface simplificada para usuários)
     const section = document.createElement('div');
     section.id = 'profluxus-config-section';
     section.style.cssText = `
@@ -546,7 +742,7 @@
           Configurações ProFluxus
         </h3>
         <p style="font-size: 14px; color: #6b7280;">
-          Configure seu WhatsApp e preferências de notificação
+          Configure suas preferências e integrações
         </p>
       </div>
 
@@ -569,9 +765,6 @@
             background-color: white;
           "
         />
-        <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
-          Número de WhatsApp para receber notificações
-        </p>
       </div>
 
       <div style="margin-bottom: 20px;">
@@ -599,7 +792,7 @@
           `).join('')}
         </select>
         <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
-          Somente administradores podem alterar esta configuração
+          Somente administradores podem alterar
         </p>
       </div>
 
@@ -620,7 +813,7 @@
         onmouseover="this.style.backgroundColor='#991b1b'"
         onmouseout="this.style.backgroundColor='#7c2d12'"
       >
-        Salvar Configurações ProFluxus
+        Salvar Configurações
       </button>
 
       <div id="profluxus-message" style="margin-top: 12px; display: none;">
@@ -628,10 +821,8 @@
       </div>
     `;
 
-    // Adiciona ao container
     container.appendChild(section);
 
-    // Adiciona evento de salvar
     document.getElementById('profluxus-salvar-perfil').addEventListener('click', async () => {
       const whatsapp = document.getElementById('profluxus-whatsapp').value.trim();
 
@@ -641,34 +832,31 @@
       try {
         messageDiv.style.display = 'none';
 
-        // Atualiza os atributos
         const updatedAttrs = setProFluxusAttrs(
           userData.custom_attributes || {},
           accountId,
           {
-            whatsapp: whatsapp,
-            uso_profluxus: attrs.uso_profluxus // Mantém o atual
+            ...attrs,
+            whatsapp: whatsapp
           }
         );
 
-        // Salva na API
         await updateUserAttributes(accountId, userData.id, updatedAttrs);
 
-        // Mostra mensagem de sucesso
         messageP.textContent = '✅ Configurações salvas com sucesso!';
         messageP.style.backgroundColor = '#d1fae5';
         messageP.style.color = '#065f46';
         messageDiv.style.display = 'block';
 
-        // Atualiza o objeto local
         userData.custom_attributes = updatedAttrs;
+        currentUserData = userData;
 
-        console.log('✅ Configurações ProFluxus salvas com sucesso');
+        console.log('✅ Configurações ProFluxus salvas');
 
       } catch (error) {
         console.error('❌ Erro ao salvar configurações:', error);
 
-        messageP.textContent = '❌ Erro ao salvar configurações. Tente novamente.';
+        messageP.textContent = '❌ Erro ao salvar. Tente novamente.';
         messageP.style.backgroundColor = '#fee2e2';
         messageP.style.color = '#991b1b';
         messageDiv.style.display = 'block';
@@ -682,9 +870,6 @@
   // INTERFACE - LISTA DE AGENTES
   // ============================================================
 
-  /**
-   * Carrega a lista de agentes e adiciona ao cache
-   */
   async function carregarAgentes() {
     const accountId = getAccountId();
     if (!accountId) {
@@ -694,7 +879,6 @@
     try {
       const agentes = await getAgents(accountId);
 
-      // Adiciona ao cache
       agentes.forEach(agente => {
         agentesCache[agente.id] = agente;
       });
@@ -706,11 +890,7 @@
     }
   }
 
-  /**
-   * Adiciona botões de configuração na tabela de agentes
-   */
   function adicionarBotoesAgentes() {
-    // Verifica se está na página de agentes
     if (!window.location.pathname.includes('/settings/agents')) {
       return;
     }
@@ -720,15 +900,11 @@
       return;
     }
 
-    // Procura por emails na página (cada agente tem um email único)
     const todosElementos = document.querySelectorAll('*');
-
     const emailsEncontrados = new Set();
 
     todosElementos.forEach(el => {
       const texto = el.textContent || '';
-
-      // Regex para email
       const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/g;
       const matches = texto.match(emailRegex);
 
@@ -739,7 +915,6 @@
       }
     });
 
-    // Para cada email encontrado, procura o agente no cache
     emailsEncontrados.forEach(email => {
       const agente = Object.values(agentesCache).find(a => a.email === email);
 
@@ -749,19 +924,13 @@
     });
   }
 
-  /**
-   * Adiciona botão de configuração para um agente específico
-   * @param {object} agente - Dados do agente
-   */
   function adicionarBotaoParaAgente(agente) {
-    // Procura elemento que contém o email do agente
     const todosElementos = document.querySelectorAll('*');
 
     for (const el of todosElementos) {
       const texto = el.textContent || '';
 
       if (texto.includes(agente.email)) {
-        // Verifica se já tem botão
         const elementoPai = el.closest('tr, div[class*="row"], div[class*="item"]');
 
         if (!elementoPai) {
@@ -772,7 +941,6 @@
           continue;
         }
 
-        // Adiciona botão
         const btnContainer = document.createElement('div');
         btnContainer.style.cssText = 'display: inline-block; margin-left: 8px;';
 
@@ -808,7 +976,6 @@
 
         btnContainer.appendChild(btn);
 
-        // Tenta adicionar ao lado do email
         if (el.parentNode) {
           el.parentNode.appendChild(btnContainer);
         }
@@ -822,22 +989,15 @@
   // INICIALIZAÇÃO
   // ============================================================
 
-  /**
-   * Inicia o script
-   */
   async function iniciar() {
     console.log('🚀 Inicializando ProFluxus Config...');
 
-    // Cria o modal
     criarModal();
 
-    // Aguarda um pouco para o DOM carregar
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Adiciona seção no perfil
     await adicionarSecaoPerfil();
 
-    // Se estiver na página de agentes, carrega os dados
     if (window.location.pathname.includes('/settings/agents')) {
       await carregarAgentes();
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -845,17 +1005,11 @@
     }
   }
 
-  // Aguarda o DOM carregar
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', iniciar);
   } else {
     iniciar();
   }
-
-  // ============================================================
-  // OBSERVER
-  // ============================================================
-  // Monitora mudanças no DOM para SPAs
 
   const observer = new MutationObserver(() => {
     adicionarSecaoPerfil();
