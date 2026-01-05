@@ -32,6 +32,9 @@
   let agentesCache = {};
   let currentUserData = null;
 
+  // API Token do ProFluxus
+  const PROFLUXUS_API_TOKEN = 'oT4hMJhLrpeVmqZdHpcsY9Nr';
+
   // ============================================================
   // FUNÇÕES DE API
   // ============================================================
@@ -46,76 +49,49 @@
   }
 
   /**
-   * Pega o auth token do Chatwoot de forma mais robusta
+   * Pega o auth token do Chatwoot
    * @returns {string|null} Token ou null
    */
   function getAuthToken() {
-    // Método 1: Tenta pegar do Vuex store (mais confiável)
     try {
       if (window.$chatwoot && window.$chatwoot.store) {
         const state = window.$chatwoot.store.state;
         if (state && state.auth && state.auth.currentUser) {
           const token = state.auth.currentUser.access_token;
           if (token) {
-            console.log('✅ Token obtido do Vuex store');
             return token;
           }
         }
       }
     } catch (e) {
-      console.log('⚠️ Erro ao acessar Vuex store:', e);
+      // Ignora
     }
 
-    // Método 2: Tenta pegar do localStorage do Chatwoot
     try {
       const authData = localStorage.getItem('auth');
       if (authData) {
         const parsed = JSON.parse(authData);
         if (parsed && parsed.currentUser && parsed.currentUser.access_token) {
-          console.log('✅ Token obtido do localStorage auth');
           return parsed.currentUser.access_token;
         }
       }
     } catch (e) {
-      console.log('⚠️ Erro ao acessar localStorage auth:', e);
+      // Ignora
     }
 
-    // Método 3: Procura em todos os items do localStorage
-    try {
-      const keys = Object.keys(localStorage);
-      for (const key of keys) {
-        if (key.toLowerCase().includes('chatwoot') || key.toLowerCase().includes('auth')) {
-          try {
-            const data = JSON.parse(localStorage.getItem(key));
-            if (data && data.currentUser && data.currentUser.access_token) {
-              console.log('✅ Token obtido de:', key);
-              return data.currentUser.access_token;
-            }
-          } catch (e) {
-            // Ignora erros de parse
-          }
-        }
-      }
-    } catch (e) {
-      console.log('⚠️ Erro ao procurar token:', e);
-    }
-
-    console.log('❌ Não foi possível obter o token de autenticação');
     return null;
   }
 
   /**
-   * Faz uma chamada para a API do Chatwoot
+   * Faz uma chamada para a API do Chatwoot (somente leitura)
    * @param {string} endpoint - Endpoint da API
-   * @param {string} method - Método HTTP
-   * @param {object} data - Dados para enviar
    * @returns {Promise<object>} Resposta da API
    */
-  async function chatwootAPI(endpoint, method = 'GET', data = null) {
+  async function chatwootAPI(endpoint) {
     const baseURL = window.location.origin;
 
     const options = {
-      method: method,
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -127,16 +103,9 @@
       options.headers['Authorization'] = `Bearer ${token}`;
     }
 
-    if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-      options.body = JSON.stringify(data);
-    }
-
-    console.log('🌐 Chamando API:', method, endpoint);
-
     const response = await fetch(`${baseURL}${endpoint}`, options);
 
     if (!response.ok) {
-      console.error('❌ Erro na API:', response.status, response.statusText);
       throw new Error(`API Error: ${response.status}`);
     }
 
@@ -144,7 +113,42 @@
   }
 
   /**
-   * Busca os dados do usuário atual
+   * Faz uma chamada para a API customizada do ProFluxus
+   * @param {string} endpoint - Endpoint da API
+   * @param {string} method - Método HTTP
+   * @param {object} data - Dados para enviar
+   * @returns {Promise<object>} Resposta da API
+   */
+  async function profluxusAPI(endpoint, method = 'GET', data = null) {
+    const baseURL = window.location.origin;
+
+    const options = {
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+        'api_access_token': PROFLUXUS_API_TOKEN
+      },
+      credentials: 'include'
+    };
+
+    if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+      options.body = JSON.stringify(data);
+    }
+
+    console.log('🌐 ProFluxus API:', method, endpoint);
+
+    const response = await fetch(`${baseURL}${endpoint}`, options);
+
+    if (!response.ok) {
+      console.error('❌ Erro na API ProFluxus:', response.status, response.statusText);
+      throw new Error(`API Error: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Busca os dados do usuário atual (Chatwoot)
    * @returns {Promise<object>} Dados do usuário
    */
   async function getCurrentUser() {
@@ -157,7 +161,7 @@
   }
 
   /**
-   * Busca a lista de agentes
+   * Busca a lista de agentes (Chatwoot)
    * @param {number} accountId - ID da conta
    * @returns {Promise<Array>} Lista de agentes
    */
@@ -166,17 +170,34 @@
   }
 
   /**
-   * Atualiza os custom_attributes do usuário
-   * @param {number} accountId - ID da conta
+   * Busca os dados do usuário via API ProFluxus
+   * @param {number} userId - ID do usuário
+   * @returns {Promise<object>} Dados do usuário
+   */
+  async function getUserProFluxus(userId) {
+    return await profluxusAPI(`/platform/api/v1/users/${userId}`);
+  }
+
+  /**
+   * Atualiza os custom_attributes do usuário via API ProFluxus
    * @param {number} userId - ID do usuário
    * @param {object} customAttributes - Atributos personalizados
    * @returns {Promise<object>} Resposta da API
    */
   async function updateUserAttributes(accountId, userId, customAttributes) {
-    return await chatwootAPI(
-      `/api/v1/accounts/${accountId}/agents/${userId}`,
+    // Primeiro busca os dados atuais
+    const currentData = await getUserProFluxus(userId);
+
+    // Faz merge dos custom_attributes
+    const updatedData = {
+      custom_attributes: customAttributes
+    };
+
+    // Atualiza via API ProFluxus
+    return await profluxusAPI(
+      `/platform/api/v1/users/${userId}`,
       'PATCH',
-      { custom_attributes: customAttributes }
+      updatedData
     );
   }
 
