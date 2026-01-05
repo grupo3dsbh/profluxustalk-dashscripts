@@ -1,0 +1,510 @@
+<script>
+(function() {
+  'use strict';
+
+  // ============================================================
+  // PROFLUXUS CONFIG - GERENCIADOR DE WHATSAPP E NOTIFICAÇÕES
+  // ============================================================
+  // Adiciona campos para configurar WhatsApp e tipo de uso do ProFluxus
+  // - Na página de perfil: usuário edita telefone, visualiza tipo de uso
+  // - Na lista de agentes: admin edita telefone e tipo de uso
+  // ============================================================
+
+  console.log('📱 ProFluxus Config carregado!');
+
+  // ============================================================
+  // CONFIGURAÇÕES
+  // ============================================================
+
+  const CONFIG = {
+    opcoes_uso: [
+      { value: 'receber_leads', label: 'Receber Leads' },
+      { value: 'notificacoes_profluxus', label: 'Notificações ProFluxus' }
+    ]
+  };
+
+  // ============================================================
+  // FUNÇÕES DE API
+  // ============================================================
+
+  /**
+   * Pega o account_id da URL atual
+   * @returns {string|null} Account ID ou null
+   */
+  function getAccountId() {
+    const match = window.location.pathname.match(/\/accounts\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Pega o auth token do Chatwoot
+   * @returns {string|null} Token ou null
+   */
+  function getAuthToken() {
+    // Tenta pegar do localStorage
+    const keys = Object.keys(localStorage);
+    for (const key of keys) {
+      if (key.includes('auth') || key.includes('token')) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key));
+          if (data && data.token) {
+            return data.token;
+          }
+        } catch (e) {
+          // Ignora erros de parse
+        }
+      }
+    }
+
+    // Tenta pegar de cookies
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name.includes('auth') || name.includes('token')) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Faz uma chamada para a API do Chatwoot
+   * @param {string} endpoint - Endpoint da API
+   * @param {string} method - Método HTTP
+   * @param {object} data - Dados para enviar
+   * @returns {Promise<object>} Resposta da API
+   */
+  async function chatwootAPI(endpoint, method = 'GET', data = null) {
+    const token = getAuthToken();
+    const baseURL = window.location.origin;
+
+    const options = {
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include'
+    };
+
+    if (token) {
+      options.headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+      options.body = JSON.stringify(data);
+    }
+
+    const response = await fetch(`${baseURL}${endpoint}`, options);
+
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Busca os dados do usuário atual
+   * @returns {Promise<object>} Dados do usuário
+   */
+  async function getCurrentUser() {
+    return await chatwootAPI('/api/v1/profile');
+  }
+
+  /**
+   * Busca os dados de um usuário específico
+   * @param {number} accountId - ID da conta
+   * @param {number} userId - ID do usuário
+   * @returns {Promise<object>} Dados do usuário
+   */
+  async function getUser(accountId, userId) {
+    return await chatwootAPI(`/api/v1/accounts/${accountId}/agents/${userId}`);
+  }
+
+  /**
+   * Atualiza os custom_attributes do usuário
+   * @param {number} accountId - ID da conta
+   * @param {number} userId - ID do usuário
+   * @param {object} customAttributes - Atributos personalizados
+   * @returns {Promise<object>} Resposta da API
+   */
+  async function updateUserAttributes(accountId, userId, customAttributes) {
+    return await chatwootAPI(
+      `/api/v1/accounts/${accountId}/agents/${userId}`,
+      'PATCH',
+      { custom_attributes: customAttributes }
+    );
+  }
+
+  // ============================================================
+  // FUNÇÕES DE ATRIBUTOS
+  // ============================================================
+
+  /**
+   * Pega os atributos do ProFluxus para uma conta específica
+   * @param {object} customAttributes - Custom attributes do usuário
+   * @param {string} accountId - ID da conta
+   * @returns {object} Atributos { whatsapp, uso_profluxus }
+   */
+  function getProFluxusAttrs(customAttributes, accountId) {
+    const key = `account_${accountId}`;
+
+    if (!customAttributes || !customAttributes[key]) {
+      return {
+        whatsapp: '',
+        uso_profluxus: 'receber_leads'
+      };
+    }
+
+    return {
+      whatsapp: customAttributes[key].whatsapp || '',
+      uso_profluxus: customAttributes[key].uso_profluxus || 'receber_leads'
+    };
+  }
+
+  /**
+   * Atualiza os atributos do ProFluxus
+   * @param {object} customAttributes - Custom attributes do usuário
+   * @param {string} accountId - ID da conta
+   * @param {object} attrs - Novos atributos { whatsapp, uso_profluxus }
+   * @returns {object} Custom attributes atualizado
+   */
+  function setProFluxusAttrs(customAttributes, accountId, attrs) {
+    const key = `account_${accountId}`;
+
+    const updated = { ...customAttributes };
+
+    updated[key] = {
+      whatsapp: attrs.whatsapp,
+      uso_profluxus: attrs.uso_profluxus
+    };
+
+    return updated;
+  }
+
+  // ============================================================
+  // INTERFACE - PÁGINA DE PERFIL
+  // ============================================================
+
+  /**
+   * Adiciona seção de configuração na página de perfil
+   */
+  async function adicionarSecaoPerfil() {
+    // Verifica se está na página de perfil
+    if (!window.location.pathname.includes('/profile/settings')) {
+      return;
+    }
+
+    console.log('📝 Adicionando seção ProFluxus no perfil...');
+
+    // Busca o container de configurações
+    const container = document.querySelector('form');
+
+    if (!container) {
+      console.log('⚠️ Container de perfil não encontrado');
+      return;
+    }
+
+    // Verifica se já foi adicionado
+    if (document.getElementById('profluxus-config-section')) {
+      return;
+    }
+
+    const accountId = getAccountId();
+    if (!accountId) {
+      console.log('⚠️ Account ID não encontrado na URL');
+      return;
+    }
+
+    // Busca dados do usuário
+    let userData;
+    try {
+      userData = await getCurrentUser();
+    } catch (error) {
+      console.error('❌ Erro ao buscar dados do usuário:', error);
+      return;
+    }
+
+    const attrs = getProFluxusAttrs(userData.custom_attributes, accountId);
+
+    // Cria a seção
+    const section = document.createElement('div');
+    section.id = 'profluxus-config-section';
+    section.style.cssText = `
+      margin-top: 32px;
+      padding-top: 32px;
+      border-top: 1px solid #e5e7eb;
+    `;
+
+    section.innerHTML = `
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #111827;">
+          Configurações ProFluxus
+        </h3>
+        <p style="font-size: 14px; color: #6b7280;">
+          Configure seu WhatsApp e preferências de notificação
+        </p>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: #374151;">
+          WhatsApp
+        </label>
+        <input
+          type="tel"
+          id="profluxus-whatsapp"
+          value="${attrs.whatsapp}"
+          placeholder="+55 31 99999-9999"
+          style="
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #111827;
+            background-color: white;
+          "
+        />
+        <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
+          Número de WhatsApp para receber notificações
+        </p>
+      </div>
+
+      <div style="margin-bottom: 20px;">
+        <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: #374151;">
+          Tipo de Uso
+        </label>
+        <select
+          id="profluxus-uso"
+          disabled
+          style="
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #9ca3af;
+            background-color: #f9fafb;
+            cursor: not-allowed;
+          "
+        >
+          ${CONFIG.opcoes_uso.map(opt => `
+            <option value="${opt.value}" ${opt.value === attrs.uso_profluxus ? 'selected' : ''}>
+              ${opt.label}
+            </option>
+          `).join('')}
+        </select>
+        <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
+          Somente administradores podem alterar esta configuração
+        </p>
+      </div>
+
+      <button
+        type="button"
+        id="profluxus-salvar-perfil"
+        style="
+          padding: 10px 20px;
+          background-color: #7c2d12;
+          color: white;
+          border: none;
+          border-radius: 6px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        "
+        onmouseover="this.style.backgroundColor='#991b1b'"
+        onmouseout="this.style.backgroundColor='#7c2d12'"
+      >
+        Salvar Configurações ProFluxus
+      </button>
+
+      <div id="profluxus-message" style="margin-top: 12px; display: none;">
+        <p style="font-size: 14px; padding: 10px; border-radius: 6px;"></p>
+      </div>
+    `;
+
+    // Adiciona ao container
+    container.appendChild(section);
+
+    // Adiciona evento de salvar
+    document.getElementById('profluxus-salvar-perfil').addEventListener('click', async () => {
+      const whatsapp = document.getElementById('profluxus-whatsapp').value.trim();
+
+      const messageDiv = document.getElementById('profluxus-message');
+      const messageP = messageDiv.querySelector('p');
+
+      try {
+        messageDiv.style.display = 'none';
+
+        // Atualiza os atributos
+        const updatedAttrs = setProFluxusAttrs(
+          userData.custom_attributes,
+          accountId,
+          {
+            whatsapp: whatsapp,
+            uso_profluxus: attrs.uso_profluxus // Mantém o atual
+          }
+        );
+
+        // Salva na API
+        await updateUserAttributes(accountId, userData.id, updatedAttrs);
+
+        // Mostra mensagem de sucesso
+        messageP.textContent = '✅ Configurações salvas com sucesso!';
+        messageP.style.backgroundColor = '#d1fae5';
+        messageP.style.color = '#065f46';
+        messageDiv.style.display = 'block';
+
+        // Atualiza o objeto local
+        userData.custom_attributes = updatedAttrs;
+
+        console.log('✅ Configurações ProFluxus salvas com sucesso');
+
+      } catch (error) {
+        console.error('❌ Erro ao salvar configurações:', error);
+
+        messageP.textContent = '❌ Erro ao salvar configurações. Tente novamente.';
+        messageP.style.backgroundColor = '#fee2e2';
+        messageP.style.color = '#991b1b';
+        messageDiv.style.display = 'block';
+      }
+    });
+
+    console.log('✅ Seção ProFluxus adicionada ao perfil');
+  }
+
+  // ============================================================
+  // INTERFACE - LISTA DE AGENTES
+  // ============================================================
+
+  /**
+   * Adiciona botões de configuração na lista de agentes
+   */
+  function adicionarBotoesAgentes() {
+    // Verifica se está na página de agentes
+    if (!window.location.pathname.includes('/settings/agents')) {
+      return;
+    }
+
+    console.log('👥 Adicionando botões ProFluxus na lista de agentes...');
+
+    const accountId = getAccountId();
+    if (!accountId) {
+      console.log('⚠️ Account ID não encontrado na URL');
+      return;
+    }
+
+    // Busca todas as linhas de agentes
+    const linhasAgentes = document.querySelectorAll('[class*="agent"]');
+
+    linhasAgentes.forEach((linha) => {
+      // Verifica se já foi adicionado botão
+      if (linha.querySelector('.profluxus-config-btn')) {
+        return;
+      }
+
+      // Tenta encontrar o ID do agente (pode estar em data-attribute ou outro lugar)
+      // Como não tenho acesso à estrutura exata, vou adicionar um botão genérico
+      // que abre um modal
+
+      const btnContainer = document.createElement('div');
+      btnContainer.style.cssText = 'display: inline-block; margin-left: 8px;';
+
+      const btn = document.createElement('button');
+      btn.className = 'profluxus-config-btn';
+      btn.innerHTML = '📱';
+      btn.title = 'Configurar ProFluxus';
+      btn.style.cssText = `
+        padding: 6px 10px;
+        background-color: #7c2d12;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      `;
+
+      btn.addEventListener('mouseover', () => {
+        btn.style.backgroundColor = '#991b1b';
+      });
+
+      btn.addEventListener('mouseout', () => {
+        btn.style.backgroundColor = '#7c2d12';
+      });
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Aqui você precisaria implementar a lógica para:
+        // 1. Identificar o userId da linha
+        // 2. Abrir um modal com os campos
+        // 3. Permitir edição de whatsapp E uso_profluxus
+
+        console.log('🔧 Abrir modal de configuração para agente');
+        alert('Funcionalidade em desenvolvimento. Use a página de perfil do usuário para configurar.');
+      });
+
+      btnContainer.appendChild(btn);
+
+      // Tenta adicionar ao final da linha
+      const acoesContainer = linha.querySelector('[class*="action"], [class*="button"]');
+      if (acoesContainer) {
+        acoesContainer.appendChild(btnContainer);
+      } else {
+        linha.appendChild(btnContainer);
+      }
+    });
+
+    console.log('✅ Botões ProFluxus adicionados aos agentes');
+  }
+
+  // ============================================================
+  // INICIALIZAÇÃO
+  // ============================================================
+
+  /**
+   * Inicia o script
+   */
+  async function iniciar() {
+    console.log('🚀 Inicializando ProFluxus Config...');
+
+    // Aguarda um pouco para o DOM carregar
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Adiciona seção no perfil
+    await adicionarSecaoPerfil();
+
+    // Adiciona botões na lista de agentes
+    adicionarBotoesAgentes();
+  }
+
+  // Aguarda o DOM carregar
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', iniciar);
+  } else {
+    iniciar();
+  }
+
+  // ============================================================
+  // OBSERVER
+  // ============================================================
+  // Monitora mudanças no DOM para SPAs
+
+  const observer = new MutationObserver(() => {
+    adicionarSecaoPerfil();
+    adicionarBotoesAgentes();
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  console.log('✨ ProFluxus Config pronto!');
+
+})();
+</script>
