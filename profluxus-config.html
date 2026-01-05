@@ -23,6 +23,9 @@
     ]
   };
 
+  // Cache de dados dos agentes
+  let agentesCache = {};
+
   // ============================================================
   // FUNÇÕES DE API
   // ============================================================
@@ -113,13 +116,12 @@
   }
 
   /**
-   * Busca os dados de um usuário específico
+   * Busca a lista de agentes
    * @param {number} accountId - ID da conta
-   * @param {number} userId - ID do usuário
-   * @returns {Promise<object>} Dados do usuário
+   * @returns {Promise<Array>} Lista de agentes
    */
-  async function getUser(accountId, userId) {
-    return await chatwootAPI(`/api/v1/accounts/${accountId}/agents/${userId}`);
+  async function getAgents(accountId) {
+    return await chatwootAPI(`/api/v1/accounts/${accountId}/agents`);
   }
 
   /**
@@ -181,6 +183,307 @@
     };
 
     return updated;
+  }
+
+  // ============================================================
+  // MODAL DE EDIÇÃO
+  // ============================================================
+
+  /**
+   * Cria o modal de edição
+   */
+  function criarModal() {
+    // Verifica se já existe
+    if (document.getElementById('profluxus-modal')) {
+      return;
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'profluxus-modal';
+    modal.style.cssText = `
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+    `;
+
+    modal.innerHTML = `
+      <div id="profluxus-modal-content" style="
+        background-color: white;
+        border-radius: 12px;
+        padding: 32px;
+        max-width: 500px;
+        width: 90%;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+      ">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+          <h2 style="font-size: 24px; font-weight: 700; color: #111827; margin: 0;">
+            Configurações ProFluxus
+          </h2>
+          <button id="profluxus-modal-close" style="
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: background-color 0.2s;
+          " onmouseover="this.style.backgroundColor='#f3f4f6'" onmouseout="this.style.backgroundColor='transparent'">
+            ×
+          </button>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Agente
+          </label>
+          <input
+            type="text"
+            id="profluxus-modal-nome"
+            disabled
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #6b7280;
+              background-color: #f9fafb;
+            "
+          />
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            WhatsApp
+          </label>
+          <input
+            type="tel"
+            id="profluxus-modal-whatsapp"
+            placeholder="+55 31 99999-9999"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+            "
+          />
+          <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
+            Número de WhatsApp para receber notificações
+          </p>
+        </div>
+
+        <div style="margin-bottom: 24px;">
+          <label style="display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #374151;">
+            Tipo de Uso
+          </label>
+          <select
+            id="profluxus-modal-uso"
+            style="
+              width: 100%;
+              padding: 10px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              color: #111827;
+              background-color: white;
+            "
+          >
+            ${CONFIG.opcoes_uso.map(opt => `
+              <option value="${opt.value}">${opt.label}</option>
+            `).join('')}
+          </select>
+          <p style="font-size: 12px; color: #6b7280; margin-top: 6px;">
+            Como o agente utilizará o ProFluxus
+          </p>
+        </div>
+
+        <div id="profluxus-modal-message" style="margin-bottom: 20px; display: none;">
+          <p style="font-size: 14px; padding: 10px; border-radius: 6px; margin: 0;"></p>
+        </div>
+
+        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+          <button id="profluxus-modal-cancelar" style="
+            padding: 10px 20px;
+            background-color: #f3f4f6;
+            color: #374151;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+          " onmouseover="this.style.backgroundColor='#e5e7eb'" onmouseout="this.style.backgroundColor='#f3f4f6'">
+            Cancelar
+          </button>
+          <button id="profluxus-modal-salvar" style="
+            padding: 10px 20px;
+            background-color: #7c2d12;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+          " onmouseover="this.style.backgroundColor='#991b1b'" onmouseout="this.style.backgroundColor='#7c2d12'">
+            Salvar Configurações
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Eventos do modal
+    document.getElementById('profluxus-modal-close').addEventListener('click', fecharModal);
+    document.getElementById('profluxus-modal-cancelar').addEventListener('click', fecharModal);
+
+    // Fecha ao clicar fora
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        fecharModal();
+      }
+    });
+  }
+
+  /**
+   * Abre o modal para editar um agente
+   * @param {number} userId - ID do usuário
+   * @param {string} userName - Nome do usuário
+   */
+  async function abrirModal(userId, userName) {
+    criarModal();
+
+    const modal = document.getElementById('profluxus-modal');
+    const accountId = getAccountId();
+
+    // Busca dados do agente
+    const agente = agentesCache[userId];
+
+    if (!agente) {
+      console.error('❌ Agente não encontrado no cache:', userId);
+      return;
+    }
+
+    const attrs = getProFluxusAttrs(agente.custom_attributes, accountId);
+
+    // Preenche os campos
+    document.getElementById('profluxus-modal-nome').value = userName;
+    document.getElementById('profluxus-modal-whatsapp').value = attrs.whatsapp;
+    document.getElementById('profluxus-modal-uso').value = attrs.uso_profluxus;
+
+    // Limpa mensagens
+    document.getElementById('profluxus-modal-message').style.display = 'none';
+
+    // Mostra o modal
+    modal.style.display = 'flex';
+
+    // Adiciona evento de salvar
+    const btnSalvar = document.getElementById('profluxus-modal-salvar');
+
+    // Remove listeners antigos
+    const novoBtnSalvar = btnSalvar.cloneNode(true);
+    btnSalvar.parentNode.replaceChild(novoBtnSalvar, btnSalvar);
+
+    // Adiciona novo listener
+    novoBtnSalvar.addEventListener('click', async () => {
+      await salvarConfiguracoesModal(userId);
+    });
+
+    // Restaura hover
+    novoBtnSalvar.addEventListener('mouseover', () => {
+      novoBtnSalvar.style.backgroundColor = '#991b1b';
+    });
+    novoBtnSalvar.addEventListener('mouseout', () => {
+      novoBtnSalvar.style.backgroundColor = '#7c2d12';
+    });
+  }
+
+  /**
+   * Salva as configurações do modal
+   * @param {number} userId - ID do usuário
+   */
+  async function salvarConfiguracoesModal(userId) {
+    const accountId = getAccountId();
+    const whatsapp = document.getElementById('profluxus-modal-whatsapp').value.trim();
+    const uso = document.getElementById('profluxus-modal-uso').value;
+
+    const messageDiv = document.getElementById('profluxus-modal-message');
+    const messageP = messageDiv.querySelector('p');
+
+    try {
+      messageDiv.style.display = 'none';
+
+      // Busca agente do cache
+      const agente = agentesCache[userId];
+
+      if (!agente) {
+        throw new Error('Agente não encontrado no cache');
+      }
+
+      // Atualiza os atributos
+      const updatedAttrs = setProFluxusAttrs(
+        agente.custom_attributes || {},
+        accountId,
+        {
+          whatsapp: whatsapp,
+          uso_profluxus: uso
+        }
+      );
+
+      // Salva na API
+      await updateUserAttributes(accountId, userId, updatedAttrs);
+
+      // Atualiza o cache
+      agente.custom_attributes = updatedAttrs;
+
+      // Mostra mensagem de sucesso
+      messageP.textContent = '✅ Configurações salvas com sucesso!';
+      messageP.style.backgroundColor = '#d1fae5';
+      messageP.style.color = '#065f46';
+      messageDiv.style.display = 'block';
+
+      console.log('✅ Configurações ProFluxus salvas para usuário:', userId);
+
+      // Fecha o modal após 1.5 segundos
+      setTimeout(() => {
+        fecharModal();
+      }, 1500);
+
+    } catch (error) {
+      console.error('❌ Erro ao salvar configurações:', error);
+
+      messageP.textContent = '❌ Erro ao salvar configurações. Tente novamente.';
+      messageP.style.backgroundColor = '#fee2e2';
+      messageP.style.color = '#991b1b';
+      messageDiv.style.display = 'block';
+    }
+  }
+
+  /**
+   * Fecha o modal
+   */
+  function fecharModal() {
+    const modal = document.getElementById('profluxus-modal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
   }
 
   // ============================================================
@@ -340,7 +643,7 @@
 
         // Atualiza os atributos
         const updatedAttrs = setProFluxusAttrs(
-          userData.custom_attributes,
+          userData.custom_attributes || {},
           accountId,
           {
             whatsapp: whatsapp,
@@ -380,7 +683,31 @@
   // ============================================================
 
   /**
-   * Adiciona botões de configuração na lista de agentes
+   * Carrega a lista de agentes e adiciona ao cache
+   */
+  async function carregarAgentes() {
+    const accountId = getAccountId();
+    if (!accountId) {
+      return;
+    }
+
+    try {
+      const agentes = await getAgents(accountId);
+
+      // Adiciona ao cache
+      agentes.forEach(agente => {
+        agentesCache[agente.id] = agente;
+      });
+
+      console.log(`✅ ${agentes.length} agentes carregados no cache`);
+
+    } catch (error) {
+      console.error('❌ Erro ao carregar agentes:', error);
+    }
+  }
+
+  /**
+   * Adiciona botões de configuração na tabela de agentes
    */
   function adicionarBotoesAgentes() {
     // Verifica se está na página de agentes
@@ -388,78 +715,107 @@
       return;
     }
 
-    console.log('👥 Adicionando botões ProFluxus na lista de agentes...');
-
     const accountId = getAccountId();
     if (!accountId) {
-      console.log('⚠️ Account ID não encontrado na URL');
       return;
     }
 
-    // Busca todas as linhas de agentes
-    const linhasAgentes = document.querySelectorAll('[class*="agent"]');
+    // Procura por emails na página (cada agente tem um email único)
+    const todosElementos = document.querySelectorAll('*');
 
-    linhasAgentes.forEach((linha) => {
-      // Verifica se já foi adicionado botão
-      if (linha.querySelector('.profluxus-config-btn')) {
-        return;
-      }
+    const emailsEncontrados = new Set();
 
-      // Tenta encontrar o ID do agente (pode estar em data-attribute ou outro lugar)
-      // Como não tenho acesso à estrutura exata, vou adicionar um botão genérico
-      // que abre um modal
+    todosElementos.forEach(el => {
+      const texto = el.textContent || '';
 
-      const btnContainer = document.createElement('div');
-      btnContainer.style.cssText = 'display: inline-block; margin-left: 8px;';
+      // Regex para email
+      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/g;
+      const matches = texto.match(emailRegex);
 
-      const btn = document.createElement('button');
-      btn.className = 'profluxus-config-btn';
-      btn.innerHTML = '📱';
-      btn.title = 'Configurar ProFluxus';
-      btn.style.cssText = `
-        padding: 6px 10px;
-        background-color: #7c2d12;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        font-size: 16px;
-        cursor: pointer;
-        transition: background-color 0.2s;
-      `;
-
-      btn.addEventListener('mouseover', () => {
-        btn.style.backgroundColor = '#991b1b';
-      });
-
-      btn.addEventListener('mouseout', () => {
-        btn.style.backgroundColor = '#7c2d12';
-      });
-
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Aqui você precisaria implementar a lógica para:
-        // 1. Identificar o userId da linha
-        // 2. Abrir um modal com os campos
-        // 3. Permitir edição de whatsapp E uso_profluxus
-
-        console.log('🔧 Abrir modal de configuração para agente');
-        alert('Funcionalidade em desenvolvimento. Use a página de perfil do usuário para configurar.');
-      });
-
-      btnContainer.appendChild(btn);
-
-      // Tenta adicionar ao final da linha
-      const acoesContainer = linha.querySelector('[class*="action"], [class*="button"]');
-      if (acoesContainer) {
-        acoesContainer.appendChild(btnContainer);
-      } else {
-        linha.appendChild(btnContainer);
+      if (matches) {
+        matches.forEach(email => {
+          emailsEncontrados.add(email);
+        });
       }
     });
 
-    console.log('✅ Botões ProFluxus adicionados aos agentes');
+    // Para cada email encontrado, procura o agente no cache
+    emailsEncontrados.forEach(email => {
+      const agente = Object.values(agentesCache).find(a => a.email === email);
+
+      if (agente) {
+        adicionarBotaoParaAgente(agente);
+      }
+    });
+  }
+
+  /**
+   * Adiciona botão de configuração para um agente específico
+   * @param {object} agente - Dados do agente
+   */
+  function adicionarBotaoParaAgente(agente) {
+    // Procura elemento que contém o email do agente
+    const todosElementos = document.querySelectorAll('*');
+
+    for (const el of todosElementos) {
+      const texto = el.textContent || '';
+
+      if (texto.includes(agente.email)) {
+        // Verifica se já tem botão
+        const elementoPai = el.closest('tr, div[class*="row"], div[class*="item"]');
+
+        if (!elementoPai) {
+          continue;
+        }
+
+        if (elementoPai.querySelector('.profluxus-config-btn')) {
+          continue;
+        }
+
+        // Adiciona botão
+        const btnContainer = document.createElement('div');
+        btnContainer.style.cssText = 'display: inline-block; margin-left: 8px;';
+
+        const btn = document.createElement('button');
+        btn.className = 'profluxus-config-btn';
+        btn.innerHTML = '📱';
+        btn.title = 'Configurar ProFluxus';
+        btn.style.cssText = `
+          padding: 6px 10px;
+          background-color: #7c2d12;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          font-size: 16px;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        `;
+
+        btn.addEventListener('mouseover', () => {
+          btn.style.backgroundColor = '#991b1b';
+        });
+
+        btn.addEventListener('mouseout', () => {
+          btn.style.backgroundColor = '#7c2d12';
+        });
+
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          abrirModal(agente.id, agente.name || agente.available_name);
+        });
+
+        btnContainer.appendChild(btn);
+
+        // Tenta adicionar ao lado do email
+        if (el.parentNode) {
+          el.parentNode.appendChild(btnContainer);
+        }
+
+        break;
+      }
+    }
   }
 
   // ============================================================
@@ -472,14 +828,21 @@
   async function iniciar() {
     console.log('🚀 Inicializando ProFluxus Config...');
 
+    // Cria o modal
+    criarModal();
+
     // Aguarda um pouco para o DOM carregar
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Adiciona seção no perfil
     await adicionarSecaoPerfil();
 
-    // Adiciona botões na lista de agentes
-    adicionarBotoesAgentes();
+    // Se estiver na página de agentes, carrega os dados
+    if (window.location.pathname.includes('/settings/agents')) {
+      await carregarAgentes();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      adicionarBotoesAgentes();
+    }
   }
 
   // Aguarda o DOM carregar
