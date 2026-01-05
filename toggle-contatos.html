@@ -1,0 +1,230 @@
+<script>
+(function() {
+  'use strict';
+
+  // ============================================================
+  // TOGGLE CONTATOS - VERSÃO FINAL
+  // ============================================================
+  // Faz o botão de contatos (👤) funcionar como toggle:
+  // - Clica uma vez → Abre contatos
+  // - Clica novamente → Fecha contatos
+  // ============================================================
+
+  console.log('👥 Toggle Contatos carregado!');
+
+  // ============================================================
+  // FUNÇÕES DE DETECÇÃO
+  // ============================================================
+
+  /**
+   * Encontra o painel de contatos aberto
+   * @returns {Element|null} Elemento do painel ou null
+   */
+  function encontrarPainel() {
+    const todos = document.querySelectorAll('*');
+
+    for (const el of todos) {
+      const texto = (el.textContent || '').trim();
+
+      // Verifica se elemento começa com "Contatos"
+      if (texto.startsWith('Contatos')) {
+        const rect = el.getBoundingClientRect();
+
+        // Verifica se tem tamanho de painel
+        if (rect.width > 200 && rect.height > 300) {
+          console.log('📍 Painel de contatos encontrado');
+          return el;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Encontra o botão X para fechar o painel
+   * @returns {Element|null} Botão de fechar ou null
+   */
+  function encontrarBotaoFechar() {
+    const painel = encontrarPainel();
+
+    if (!painel) {
+      console.log('❌ Painel não encontrado para fechar');
+      return null;
+    }
+
+    // Método 1: Procura por ícone Lucide X (.i-lucide-x)
+    const iconeX = painel.querySelector('.i-lucide-x');
+
+    if (iconeX) {
+      const botao = iconeX.closest('button');
+      if (botao) {
+        console.log('✅ Botão X encontrado (ícone lucide-x)');
+        return botao;
+      }
+    }
+
+    // Método 2: Procura por ícone Heroicons ou outros
+    const iconesFechar = painel.querySelectorAll('[class*="x"], [class*="close"], [class*="times"]');
+
+    for (const icone of iconesFechar) {
+      const botao = icone.closest('button');
+      if (botao) {
+        console.log('✅ Botão X encontrado (ícone genérico)');
+        return botao;
+      }
+    }
+
+    // Método 3: Procura por texto × ou X
+    const botoes = painel.querySelectorAll('button');
+
+    for (const btn of botoes) {
+      const texto = btn.textContent.trim();
+
+      if (texto === '×' || texto === 'X' || texto === 'x') {
+        console.log('✅ Botão X encontrado (texto)');
+        return btn;
+      }
+    }
+
+    console.log('⚠️ Botão X não encontrado no painel');
+    return null;
+  }
+
+  // ============================================================
+  // FUNÇÃO DE FECHAR
+  // ============================================================
+
+  /**
+   * Fecha o painel de contatos
+   * @returns {boolean} True se conseguiu fechar
+   */
+  function fecharPainel() {
+    console.log('🚪 Tentando fechar painel...');
+
+    const botaoX = encontrarBotaoFechar();
+
+    if (botaoX) {
+      console.log('✅ Clicando no botão X...');
+      botaoX.click();
+      return true;
+    }
+
+    console.log('❌ Não conseguiu fechar o painel');
+    return false;
+  }
+
+  // ============================================================
+  // INSTALAÇÃO DO TOGGLE
+  // ============================================================
+
+  /**
+   * Instala o comportamento de toggle no botão de contatos
+   */
+  function instalarToggle() {
+    // Encontra o ícone de usuário (👤)
+    const iconeUsuario = document.querySelector('.i-ph-user-bold');
+
+    if (!iconeUsuario) {
+      // Botão ainda não apareceu, observer vai tentar de novo
+      return;
+    }
+
+    // Encontra o botão pai
+    const botao = iconeUsuario.closest('button');
+
+    if (!botao) {
+      console.log('⚠️ Botão de contatos não encontrado');
+      return;
+    }
+
+    // Evita instalar múltiplas vezes no mesmo botão
+    if (botao.dataset.toggleInstalado === 'true') {
+      return;
+    }
+
+    botao.dataset.toggleInstalado = 'true';
+    console.log('✅ Toggle instalado no botão de contatos');
+
+    // ============================================================
+    // HANDLER DO CLIQUE
+    // ============================================================
+
+    botao.addEventListener('click', function(evento) {
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('🖱️ CLIQUE NO BOTÃO DE CONTATOS');
+
+      // Verifica se o painel está aberto AGORA
+      const painelAberto = encontrarPainel();
+
+      if (painelAberto) {
+        // PAINEL ESTÁ ABERTO → FECHA
+        console.log('🔴 Painel está ABERTO → FECHANDO');
+
+        // Impede que o clique abra o painel novamente
+        evento.preventDefault();
+        evento.stopPropagation();
+        evento.stopImmediatePropagation();
+
+        // Fecha o painel
+        fecharPainel();
+
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // Para a execução do evento
+        return false;
+
+      } else {
+        // PAINEL ESTÁ FECHADO → DEIXA ABRIR
+        console.log('🟢 Painel está FECHADO → DEIXANDO ABRIR');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // Não faz nada, deixa o clique funcionar normalmente
+      }
+
+    }, true); // useCapture = true (executa ANTES de outros listeners)
+  }
+
+  // ============================================================
+  // INICIALIZAÇÃO
+  // ============================================================
+
+  /**
+   * Inicia o script
+   */
+  function iniciar() {
+    console.log('🚀 Inicializando toggle de contatos...');
+
+    // Tenta instalar o toggle
+    instalarToggle();
+  }
+
+  // Aguarda o DOM carregar
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(iniciar, 200);
+    });
+  } else {
+    // DOM já carregado
+    setTimeout(iniciar, 200);
+  }
+
+  // ============================================================
+  // OBSERVER
+  // ============================================================
+  // Monitora mudanças no DOM para detectar quando o botão aparecer
+  // (útil para SPAs que carregam conteúdo dinamicamente)
+
+  const observer = new MutationObserver(function() {
+    instalarToggle();
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  console.log('✨ Script toggle de contatos pronto!');
+
+})();
+</script>
