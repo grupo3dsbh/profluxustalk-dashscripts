@@ -26,26 +26,20 @@ Gerenciador completo de configurações ProFluxus integrado ao Chatwoot.
 
 #### Integrações
 
-**API Chatwoot (Leitura):**
-- `/api/v1/profile` - Dados do usuário atual
-- `/api/v1/accounts/{id}/agents` - Lista de agentes
-
-**API ProFluxus (Escrita):**
+**API ProFluxus (Única):**
 - Endpoint: `/platform/api/v1/users/{id}`
-- Método: `GET` + `PATCH`
+- Métodos: `GET` (buscar) + `PATCH` (atualizar)
 - Header: `api_access_token: oT4hMJhLrpeVmqZdHpcsY9Nr`
-- Preserva dados existentes ao atualizar
+- Sem dependência da API Chatwoot padrão
+- Busca dados sob demanda ao clicar no botão
 
 #### Interface
 
-**Página de Perfil:**
-- Seção "Configurações ProFluxus" na página de perfil do usuário
-- Permite configurar WhatsApp pessoal
-- Tipo de uso bloqueado (somente admin pode alterar)
-
-**Lista de Agentes (Admin):**
-- Botão 📱 ao lado de cada agente
+**Lista de Agentes (somente `/settings/agents`):**
+- Detecta agentes automaticamente pelos links de perfil
+- Botão 📱 ao lado do nome de cada agente
 - Modal completo com todos os campos
+- Busca dados via API ProFluxus ao clicar
 - Permite configurar qualquer agente da conta
 
 #### Como Usar
@@ -54,14 +48,10 @@ Gerenciador completo de configurações ProFluxus integrado ao Chatwoot.
    - Copie o conteúdo de `profluxus-config.html`
    - Cole no console do navegador ou adicione como script customizado
 
-2. **Configurar como Usuário:**
-   - Acesse: `/accounts/{id}/profile/settings`
-   - Configure seu WhatsApp
-   - Salve as configurações
-
-3. **Configurar como Admin:**
+2. **Configurar Agentes:**
    - Acesse: `/accounts/{id}/settings/agents`
-   - Clique no botão 📱 ao lado do agente
+   - Aguarde os botões 📱 aparecerem ao lado de cada agente
+   - Clique no botão do agente que deseja configurar
    - Configure todos os campos no modal
    - Salve as configurações
 
@@ -168,6 +158,16 @@ profluxustalk-dashscripts/
 
 ## 📝 Changelog
 
+### 2026-01-06
+
+- ✅ Remove completamente dependência da API Chatwoot
+- ✅ Usa APENAS API ProFluxus para todas as operações
+- ✅ Simplifica detecção de agentes (via links de perfil)
+- ✅ Remove cache de agentes e seção de perfil
+- ✅ Busca dados sob demanda ao clicar no botão
+- ✅ Script reduzido de 1048 para 720 linhas
+- ✅ Elimina erros 401 de autenticação
+
 ### 2026-01-05
 
 - ✅ Implementa integração completa com API ProFluxus
@@ -176,9 +176,6 @@ profluxustalk-dashscripts/
 - ✅ Interface na página de perfil
 - ✅ Botões na lista de agentes (admin)
 - ✅ Toggle de contatos funcional
-
-### 2026-01-05 (anterior)
-
 - ✅ Corrige campos do gerenciador ProFluxus
 - ✅ Adiciona script de toggle para painel de contatos
 - ✅ Primeira versão do gerenciador de configurações
